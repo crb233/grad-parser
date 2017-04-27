@@ -26,8 +26,8 @@ GRAmmar Definition Parser
 import grad_parser as grad
 
 g = grad.Grammar()
-g.import_grammar(grad.basics)
-g.load_grammar(
+g.use(grad.basics)
+g.load(
     \'''
     
     def = beginl 'def ' : name : '(' : [params] : ')' : ':' :
@@ -50,14 +50,11 @@ g.load_grammar(
 
 
 
-
-
 class ParseError(Exception):
     pass
 
 class NotImplementedError(Exception):
     pass
-
 
 class Match:
     def __init__(self, start, next, children=[], name=''):
@@ -137,11 +134,13 @@ class Grammar:
                 index = match.next
         return matches
     
-    def import_grammar(self, grammar):
+    def use(self, grammar):
+        '''Use (import) definitions from another grammar on top of this one'''
         for rule in grammar.rules:
             self.add_rule(rule)
     
-    def load_grammar(self, text):
+    def load(self, text):
+        '''Parse and load a grammar definition on top of the current grammar'''
         # TODO parse grammar from text
         pass
 
