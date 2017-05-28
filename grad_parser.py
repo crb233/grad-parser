@@ -56,7 +56,11 @@ class ParseError(Exception):
 class NotImplementedError(Exception):
     pass
 
+
+
 class Match:
+    '''Denotes a section of text which was successfully matched by a rule'''
+    
     def __init__(self, start, next, parts=[], name=''):
         self.start = start
         self.next = next
@@ -98,20 +102,23 @@ class Pattern:
         self.params = params
         self.inner = inner
     
-    def make_rule(self, args):
-        '''Creates a rule from the provided arguments'''
-        if len(self.params) != len(inners):
+    def apply(self, args):
+        '''Apply this pattern to the provided arguments'''
+        if len(args) > len(self.params):
             raise ParseError('Unexpected number of arguments to pattern')
-        
-        rb = Pattern.RuleBuilder(self.params, args)
-        return rb.get_reference(self.inner.copy_with_references())
+            
+        else:
+            rb = Pattern.RuleBuilder(self.params, args)
+            return rb.get_reference(self.inner.copy_with_refs())
+
+
 
 class Rule:
     def parse(self, text, start):
         '''Attempts to parse text[start:]. Returns a Match object or None'''
         raise NotImplementedError()
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         '''Returns a reference-preserving copy of this rule'''
         raise NotImplementedError()
     
@@ -119,12 +126,28 @@ class Rule:
         '''Converts references to the rules they are meant to reference'''
         pass
 
+
+
 class Reference(Rule):
+    '''Represents an unresolved external rule'''
+    
     def __init__(self, name):
         self.name = name
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return Reference(self.name)
+
+class PatternReference(Reference):
+    '''Represents an unresolved external pattern application'''
+    
+    def __init__(self, name, args):
+        self.name = name
+        self.args = args
+    
+    def copy_with_refs(self):
+        return PatternReference(self.name)
+
+
 
 class NamedRule(Rule):
     def __init__(self, name, inner):
@@ -141,17 +164,19 @@ class NamedRule(Rule):
         else:
             return Match(match.start, match.next, [match], self.name)
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return self
     
     def resolve_references(self, grammar):
         self.inner = grammar.get_reference(self.inner)
 
+
+
 class Empty(Rule):
     def parse(self, text, start):
         return Match(start, start)
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return Empty()
 
 class BeginLine(Rule):
@@ -167,7 +192,7 @@ class BeginLine(Rule):
         else:
             return None
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return BeginLine()
 
 class EndLine(Rule):
@@ -181,7 +206,7 @@ class EndLine(Rule):
         else:
             return None
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return EndLine()
 
 class Chars(Rule):
@@ -196,7 +221,7 @@ class Chars(Rule):
         else:
             return None
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return Chars(self.chars)
 
 class All(Rule):
@@ -206,7 +231,7 @@ class All(Rule):
         else:
             return Match(start, start + 1)
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return All()
 
 class Range(Rule):
@@ -222,7 +247,7 @@ class Range(Rule):
         else:
             return None
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return Range(self.low, self.high)
 
 class Literal(Rule):
@@ -239,7 +264,7 @@ class Literal(Rule):
             i += 1
         return Match(start, i)
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return Literal(self.literal)
 
 class Optional(Rule):
@@ -253,8 +278,8 @@ class Optional(Rule):
         else:
             return Match(start, start)
     
-    def copy_with_references(self):
-        return Optional(self.inner.copy_with_references())
+    def copy_with_refs(self):
+        return Optional(self.inner.copy_with_refs())
     
     def resolve_references(self, grammar):
         self.inner = grammar.get_reference(self.inner)
@@ -274,17 +299,17 @@ class Negation(Rule):
         else:
             return None
     
-    def copy_with_references(self):
+    def copy_with_refs(self):
         return Negation(
-            self.poistive.copy_with_references(),
-            self.negative.copy_with_references())
+            self.poistive.copy_with_refs(),
+            self.negative.copy_with_refs())
     
     def resolve_references(self, grammar):
         self.poistive = grammar.get_reference(self.poistive)
         self.negative = grammar.get_reference(self.negative)
 
 class Alternation(Rule):
-    def __init__(self, inners):
+    def __init__(self, *inners):
         self.inners = inners
     
     def parse(self, text, start):
@@ -294,11 +319,11 @@ class Alternation(Rule):
                 return match
         return None
     
-    def copy_with_references(self):
-        inners = []
+    def copy_with_refs(self):
+        inners_copy = []
         for i in self.inners:
-            inners.append(i.copy_with_references())
-        return Alternation(inners)
+            inners_copy.append(i.copy_with_refs())
+        return Alternation(inners_copy)
     
     def resolve_references(self, grammar):
         for i in range(len(self.inners)):
@@ -319,11 +344,11 @@ class Concatenation(Rule):
             i = match.next
         return Match(start, i, matches)
     
-    def copy_with_references(self):
-        inners = []
+    def copy_with_refs(self):
+        inners_copy = []
         for i in self.inners:
-            inners.append(i.copy_with_references())
-        return Concatenation(inners)
+            inners_copy.append(i.copy_with_refs())
+        return Concatenation(inners_copy)
     
     def resolve_references(self, grammar):
         for i in range(len(self.inners)):
@@ -339,18 +364,20 @@ class Repeat(Rule):
         i = start
         n = 0
         match = self.inner.parse(text, i)
+        
         while match is not None:
             matches.append(match)
             i = match.next
             n += 1
             match = self.inner.parse(text, i)
+        
         if n >= self.min_matches:
             return Match(start, i, matches)
         else:
             return None
     
-    def copy_with_references(self):
-        return Repeat(self.inner.copy_with_references(), self.min_matches)
+    def copy_with_refs(self):
+        return Repeat(self.inner.copy_with_refs(), self.min_matches)
     
     def resolve_references(self, grammar):
         self.inner = grammar.get_reference(self.inner)
@@ -358,46 +385,51 @@ class Repeat(Rule):
 
 
 class Grammar:
-    # TODO integrate patterns
-    
     def __init__(self):
         self.rules = []
         self.lookup = {}
         self.patterns = {}
     
-    def get_rule(self, name):
-        '''Returns the named rule with the given name'''
-        return self.rules[self.lookup[name]]
-    
-    def has_rule(self, name):
+    def has(self, name):
         '''Returns whether or not this grammar contains a named rule'''
-        return name in self.lookup
+        return name in self.lookup or name in patterns
     
-    def add_rule(self, rule):
+    def add(self, obj):
         '''Adds a rule with references to lower level rules or itself'''
-        if isinstance(rule, NamedRule):
-            if self.has_rule(rule.name):
-                del self.rules[self.lookup(rule.name)]
-            self.lookup[rule.name] = len(self.rules)
-            self.rules.append(rule)
-            rule.resolve_references(self)
+        if isinstance(obj, NamedRule):
+            if self.has(obj.name):
+                del self.rules[self.lookup[obj.name]]
+            self.lookup[obj.name] = len(self.rules)
+            self.rules.append(obj)
+            obj.resolve_references(self)
+            
+        elif isinstance(obj, Pattern):
+            self.patterns[obj.name] = obj
+            
         else:
             raise TypeError('Expected a NamedRule')
     
-    def get_reference(self, rule):
-        '''Replaces references to named rules with the rules they reference'''
-        if isinstance(rule, Reference):
-            if self.has_rule(rule.name):
-                return self.get_rule(rule.name)
+    def get_reference(self, ref):
+        '''Retrieves the pattern or rule indicated by a Reference'''
+        if isinstance(ref, PatternReference):
+            if self.has(ref.name):
+                return self.patterns[ref.name].apply(ref.args)
             else:
-                raise Exception('Unresolved reference ' + rule)
+                raise Exception('Unresolved reference ' + ref)
+            
+        elif isinstance(ref, Reference):
+            if self.has(ref.name):
+                return self.rules[self.lookup[ref.name]]
+            else:
+                raise Exception('Unresolved reference ' + ref)
+            
         else:
-            rule.resolve_references(self)
-            return rule
+            ref.resolve_references(self)
+            return ref
     
     def parse(self, text, names=None):
         '''Parses text with this grammar (optionally only for certain rules)'''
-        if names = None:
+        if names is None:
             rules = self.rules
         elif len(names) == 0:
             return []
@@ -405,6 +437,7 @@ class Grammar:
             rules = []
             for name in names:
                 rules.append(self.get_rule(name))
+        
         index = 0
         matches = []
         while index < len(text):
@@ -427,13 +460,15 @@ class Grammar:
     def use(self, grammar):
         '''Use (import) definitions from another grammar on top of this one'''
         for rule in grammar.rules:
-            self.add_rule(rule)
-        self.patterns.update(grammar.patterns)
+            self.add(rule)
+        for pattern in grammar.patterns:
+            self.add(pattern)
     
     def load(self, text):
         '''Parse and load a grammar definition on top of the current grammar'''
+        grammar = Grammar()
         # TODO parse grammar from text
-        pass
+        self.use(grammar)
 
 
 
@@ -444,13 +479,14 @@ pattern_def = beginl s word s '(' s (word s)* ')' s '=' s rule s ';';
 
 rule = pattern | group
     | optional | alternation
-    | concatenation | not | repeat
-    | range | literal | word;
+    | concatenation | negation
+    | repeat | range
+    | literal | word;
 pattern = word s '(' s (rule s)* ')';
 group = '(' s rule s ')';
 concatenation = rule s rule;
 alternation = rule s '|' s rule;
-not = rule s '-' s rule;
+negation = rule s '-' s rule;
 optional = '[' s rule s ']';
 repeat = rule s ('+' | '*');
 range = literal s '->' s literal;
@@ -479,18 +515,68 @@ hex = NamedRule('hex',
     Alternation([Range('0', '9'), Range('a', 'f'), Range('A', 'F')])
 )
 char = NamedRule('char',
-    Alternation(Literal('\\\\'), Literal('\\n'), Literal('\\t'), Literal('\\\''),
-    Literal('\\\"'), Negation(All(), Alternation([Literal('\\'), Literal('\n')])))
+    Alternation([Literal('\\\\'), Literal('\\n'), Literal('\\t'), Literal('\\\''),
+    Literal('\\\"'), Negation(All(), Alternation([Literal('\\'), Literal('\n')]))])
 )
 rule = NamedRule('rule',
     Empty()
 )
-Literal = NamedRule('Literal',
+literal = NamedRule('literal',
     Alternation([
         Concatenation([Literal("'"), Repeat(Alternation(char, Literal('"'))), Literal("'")]),
         Concatenation([Literal('"'), Repeat(Alternation(char, Literal("'"))), Literal('"')])
     ])
 )
+range = NamedRule('ramge',
+    Concatenation([literal, s, Literal('->'), s, literal])
+)
+repeat = NamedRule('repeat'
+    Concatenation([rule, s, Alternation([Literal('*'), Literal('+')])])
+)
+optional = NamedRule('optional'
+    Concatenation([Literal('['), s, rule, s, Literal(']')])
+)
+negation = NamedRule('negation'
+    Concatenation([rule, s, Literal('-'), s, rule])
+)
+alternation = NamedRule('alternation'
+    Concatenation([rule, s, Literal('|'), s, rule])
+)
+group = NamedRule('group'
+    Concatenation([Literal('('), s, rule, s, Literal(')')])
+)
+pattern = NamedRule('pattern'
+    Concatenation([
+        word, s, Literal('('), s,
+        Repeat(Concatenation([rule, s])),
+        Literal(')')
+    ])
+)
+rule.inner = Alternation([
+    pattern, group, alternation, negation, optional, repeat, range, literal
+])
+
+# comment = '#' (all - endl)* endl;
+# rule_def = beginl s word s '=' s rule s ';';
+# pattern_def = beginl s word s '(' s (word s)* ')' s '=' s rule s ';';
+
+pattern_def = NamedRule('pattern_def',
+    Concatenation([BeginLine(), s, word, s, Literal('('), s,
+    Repeat(Concatenation([word, s])), ')', s, Literal('='),
+    s, rule, s, Literal(';')
+    ])
+)
+rule_def = NamedRule('rule_def',
+    Concatenation([BeginLine(), s, word, s, Literal('='),
+    s, rule, s, Literal(';')
+    ])
+)
+comment = NamedRule('comment'
+    Concatenation([
+        Literal('#'), Repeat(Negation(All(), EndLine())), EndLine()
+    ])
+)
+
 # TODO finish building meta grammar
 
 
